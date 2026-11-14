@@ -47,6 +47,12 @@ postgresql:
       password: ${REPLICATION_PASSWORD}
   parameters:
     unix_socket_directories: '/tmp'
+  # Hooks that pause/resume PgBouncer and switch HAProxy at once on a planned leader change.
+  before_stop: /opt/patroni/bin/python /usr/local/bin/patroni_hooks.py before_stop
+  callbacks:
+    on_role_change: /opt/patroni/bin/python /usr/local/bin/patroni_hooks.py
+    on_start: /opt/patroni/bin/python /usr/local/bin/patroni_hooks.py
+    on_restart: /opt/patroni/bin/python /usr/local/bin/patroni_hooks.py
 YAML
 
 exec /opt/patroni/bin/patroni /tmp/patroni.yml

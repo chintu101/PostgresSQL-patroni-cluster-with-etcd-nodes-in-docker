@@ -10,6 +10,8 @@ x-pg-common: &pg-common
     - etcd1
     - etcd2
     - etcd3
+  volumes:
+    - ./patroni/patroni_hooks.py:/usr/local/bin/patroni_hooks.py:ro
   networks: [lab]
   restart: unless-stopped
   shm_size: 256mb
@@ -101,6 +103,29 @@ services:
       <<: *pg-env
       NODE_NAME: pg5
     ports: ["5445:5432", "8085:8008"]
+
+  haproxy:
+    image: haproxy:3.0
+    hostname: haproxy
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports: ["5000:5000", "5001:5001", "127.0.0.1:7000:7000"]
+    depends_on: [pg1, pg2, pg3, pg4, pg5]
+    networks: [lab]
+    restart: unless-stopped
+
+  pgbouncer:
+    build: ./pgbouncer
+    image: pg-lab-pgbouncer
+    hostname: pgbouncer
+    environment:
+      POSTGRES_PASSWORD: lab-super-pw
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+    ports: ["6432:6432"]
+    depends_on: [haproxy]
+    networks: [lab]
+    restart: unless-stopped
 
 networks:
   lab:
