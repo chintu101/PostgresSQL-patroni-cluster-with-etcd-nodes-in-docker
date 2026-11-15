@@ -6,12 +6,15 @@ x-pg-common: &pg-common
   environment: &pg-env
     POSTGRES_PASSWORD: lab-super-pw
     REPLICATION_PASSWORD: lab-repl-pw
+    # TLS required (phase 2). Phase 1 values, TLS offered but not required: prefer / host / md5.
+    PG_TLS_SSLMODE: verify-full   # replication and superuser (pg_rewind) connections between nodes
+    PG_HBA_TYPE: hostssl          # pg_hba type for network connections: TLS only
+    PG_HBA_METHOD: scram-sha-256  # pg_hba login method for network connections
   depends_on:
     - etcd1
     - etcd2
     - etcd3
-  volumes:
-    - ./patroni/patroni_hooks.py:/usr/local/bin/patroni_hooks.py:ro
+  # Each node mounts its own folder of the pg-lab-tls volume (tls/make-certs.sh) at /tls, read-only.
   networks: [lab]
   restart: unless-stopped
   shm_size: 256mb
@@ -70,6 +73,9 @@ services:
     environment:
       <<: *pg-env
       NODE_NAME: pg1
+    volumes:
+      - ./patroni/patroni_hooks.py:/usr/local/bin/patroni_hooks.py:ro
+      - {type: volume, source: tls, target: /tls, read_only: true, volume: {subpath: pg1}}
     ports: ["5441:5432", "8081:8008"]
 
   pg2:
@@ -78,6 +84,9 @@ services:
     environment:
       <<: *pg-env
       NODE_NAME: pg2
+    volumes:
+      - ./patroni/patroni_hooks.py:/usr/local/bin/patroni_hooks.py:ro
+      - {type: volume, source: tls, target: /tls, read_only: true, volume: {subpath: pg2}}
     ports: ["5442:5432", "8082:8008"]
 
   pg3:
@@ -86,6 +95,9 @@ services:
     environment:
       <<: *pg-env
       NODE_NAME: pg3
+    volumes:
+      - ./patroni/patroni_hooks.py:/usr/local/bin/patroni_hooks.py:ro
+      - {type: volume, source: tls, target: /tls, read_only: true, volume: {subpath: pg3}}
     ports: ["5443:5432", "8083:8008"]
 
   pg4:
@@ -94,6 +106,9 @@ services:
     environment:
       <<: *pg-env
       NODE_NAME: pg4
+    volumes:
+      - ./patroni/patroni_hooks.py:/usr/local/bin/patroni_hooks.py:ro
+      - {type: volume, source: tls, target: /tls, read_only: true, volume: {subpath: pg4}}
     ports: ["5444:5432", "8084:8008"]
 
   pg5:
@@ -102,6 +117,9 @@ services:
     environment:
       <<: *pg-env
       NODE_NAME: pg5
+    volumes:
+      - ./patroni/patroni_hooks.py:/usr/local/bin/patroni_hooks.py:ro
+      - {type: volume, source: tls, target: /tls, read_only: true, volume: {subpath: pg5}}
     ports: ["5445:5432", "8085:8008"]
 
   haproxy:
@@ -122,6 +140,7 @@ services:
       POSTGRES_PASSWORD: lab-super-pw
     volumes:
       - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - {type: volume, source: tls, target: /tls, read_only: true, volume: {subpath: pgbouncer}}
     ports: ["6432:6432"]
     depends_on: [haproxy]
     networks: [lab]
@@ -130,3 +149,8 @@ services:
 networks:
   lab:
     driver: bridge
+
+volumes:
+  tls:
+    name: pg-lab-tls   # created and filled by tls/make-certs.sh
+    external: true

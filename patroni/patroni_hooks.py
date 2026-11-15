@@ -113,8 +113,32 @@ def before_stop():
     log(f"before_stop done in {time.time() - t0:.2f}s")
 
 
+def wait_until_writable(limit=30.0):
+    """Patroni fires on_role_change right after it asks PostgreSQL to promote, while recovery is still
+    finishing (measured ~0.1 s). Resuming clients then sends their queued queries to a read-only server."""
+    t0 = time.time()
+    while time.time() - t0 < limit:
+        try:
+            conn = psycopg2.connect(host="127.0.0.1", port=5432, dbname="postgres", user="postgres",
+                                    password=PASSWORD, connect_timeout=2)
+            with conn.cursor() as cur:
+                cur.execute("SELECT NOT pg_is_in_recovery()")
+                writable = cur.fetchone()[0]
+            conn.close()
+            if writable:
+                return time.time() - t0
+        except Exception:
+            pass
+        time.sleep(0.05)
+    return None
+
+
 def became_primary(action):
-    log(f"{action}: this node is primary; haproxy primary/{NODE} up, others down; RESUME pgbouncer")
+    waited = wait_until_writable()
+    if waited is None:
+        log(f"{action}: still in recovery after 30 s; leaving haproxy and pgbouncer to the watchdog/health checks")
+        return
+    log(f"{action}: this node is primary, writable after {waited:.2f}s; haproxy primary/{NODE} up, others down; RESUME pgbouncer")
     for n in NODES:
         haproxy(f"set server primary/{n} health {'up' if n == NODE else 'down'}")
     r = bouncer("RESUME", timeout=5)

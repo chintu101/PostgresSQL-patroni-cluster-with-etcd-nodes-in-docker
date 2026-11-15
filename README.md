@@ -432,3 +432,48 @@ docker compose start pg1
 sleep 20
 docker compose exec pg2 /opt/patroni/bin/patronictl -c /tmp/patroni.yml list
 ```
+
+# Load balancer, connection pooling and TLS
+The sections above show the original lab. Since then three things sit in front of, or inside, the nodes. The
+file listings earlier in this README are the original versions; the files in the repo are current.
+
+## Ports
+| Port | What | Goes to |
+|---|---|---|
+| 6432 | PgBouncer (transaction pooling) | HAProxy 5000, so always the leader. Preferred entry point for applications |
+| 5000 | HAProxy writes | The node whose Patroni API answers `/primary` |
+| 5001 | HAProxy reads | Round robin over the nodes answering `/replica` |
+| 5441–5445 | Each node directly | pg1–pg5 |
+| 127.0.0.1:7000 | HAProxy stats page | |
+
+## Planned leader changes without client errors
+`patroni/patroni_hooks.py` runs from Patroni's `before_stop` and `on_role_change` hooks. When the leader is about to
+stop, it pauses PgBouncer (running transactions finish, new queries wait) and takes the leader out of HAProxy. When
+the new leader is writable, it puts that node in HAProxy and resumes PgBouncer. In switchover tests, queries waited
+about 1.3 s and none failed. A crash has no `before_stop`: queries wait in PgBouncer until Patroni elects a new
+leader (up to `ttl`, 30 s, if the whole node died).
+
+## TLS
+Every port refuses unencrypted connections. Network logins use `scram-sha-256` over TLS (`hostssl`); only
+connections from inside a container (loopback, used by Patroni and the hooks) skip TLS. Replication, `pg_rewind`
+and PgBouncer's connection to the leader check the server certificate and host name (`verify-full`).
+
+Create the certificates once, before starting the nodes (nothing is downloaded; OpenSSL comes from the Patroni image):
+```bash
+bash tls/make-certs.sh
+```
+It writes a lab CA and one certificate per node and for PgBouncer into the Docker volume `pg-lab-tls`; each
+container mounts only its own folder, read-only. Private keys never land on the host. Only the CA certificate is
+copied out, to `tls/ca.crt` (git-ignored). Certificates are valid for `pgN`, `haproxy`, `localhost` and `127.0.0.1`
+(PgBouncer: `pgbouncer`, `localhost`, `127.0.0.1`); `RENEW=1 bash tls/make-certs.sh` reissues them.
+
+Connect with full checks:
+```bash
+psql "host=localhost port=6432 user=postgres dbname=postgres sslmode=verify-full sslrootcert=tls/ca.crt"
+```
+`psql -h localhost -p 5441 -U postgres`, as used above, still works: libpq tries TLS by default. It just doesn't
+check the certificate.
+
+The TLS strictness of the nodes is set by three variables in `docker-compose.yml` (`PG_TLS_SSLMODE`, `PG_HBA_TYPE`,
+`PG_HBA_METHOD`); `prefer` / `host` / `md5` makes TLS optional again. Not covered by TLS: etcd and the Patroni
+REST API (port 8008).
